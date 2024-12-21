@@ -10,10 +10,37 @@ const corsHeaders = {
   'Access-Control-Max-Age': '86400',
 };
 
+// Add a root route handler
+router.get('/', () => {
+  return new Response('VPN News API is running!', {
+    headers: {
+      'Content-Type': 'text/plain',
+      ...corsHeaders
+    }
+  });
+});
+
 // Handle OPTIONS requests
 router.options('*', () => new Response(null, {
   headers: corsHeaders
 }));
+
+// Helper function to extract content between XML tags
+function getTagContent(xml, tag) {
+  const regex = new RegExp(`<${tag}[^>]*>(.*?)<\/${tag}>`, 'gs');
+  const matches = [...xml.matchAll(regex)];
+  return matches.map(match => match[1].trim());
+}
+
+// Helper function to parse a single item
+function parseItem(itemXml) {
+  return {
+    title: getTagContent(itemXml, 'title')[0] || '',
+    link: getTagContent(itemXml, 'link')[0] || '',
+    description: getTagContent(itemXml, 'description')[0] || '',
+    pubDate: getTagContent(itemXml, 'pubDate')[0] || '',
+  };
+}
 
 // Convert your existing /api/news route to Workers format
 router.get('/api/news', async (request) => {
@@ -30,18 +57,12 @@ router.get('/api/news', async (request) => {
 
     const xmlText = await response.text();
     
-    // Parse XML using DOMParser (available in Workers runtime)
-    const parser = new DOMParser();
-    const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+    // Split XML into items
+    const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+    const items = [...xmlText.matchAll(itemRegex)];
     
-    // Convert XML to JSON
-    const items = xmlDoc.querySelectorAll('item');
-    const news = Array.from(items).map(item => ({
-      title: item.querySelector('title')?.textContent || '',
-      link: item.querySelector('link')?.textContent || '',
-      description: item.querySelector('description')?.textContent || '',
-      pubDate: item.querySelector('pubDate')?.textContent || '',
-    }));
+    // Parse each item
+    const news = items.map(item => parseItem(item[0]));
 
     return new Response(JSON.stringify({ rss: { channel: [{ item: news }] } }), {
       headers: {
@@ -50,7 +71,12 @@ router.get('/api/news', async (request) => {
       }
     });
   } catch (error) {
-    return new Response(JSON.stringify({ error: 'Error fetching news data' }), {
+    // Return more detailed error information
+    return new Response(JSON.stringify({ 
+      error: 'Error fetching news data',
+      details: error.message,
+      stack: error.stack
+    }), {
       status: 500,
       headers: {
         'Content-Type': 'application/json',
